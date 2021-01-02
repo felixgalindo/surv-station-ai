@@ -1,0 +1,20 @@
+{
+  "name": "surv-station-ai",
+  "version": "1.0.0",
+  "description": "Synology Surveillance Station AI Objection Detection using DeepStack",
+  "main": "index.js",
+  "scripts": {
+    "test": "node index.js"
+  },
+  "keywords": [
+    "synology",
+    "surveillance",
+    "ai"
+  ],
+  "author": "Felix Galindo",
+  "license": "MIT",
+  "dependencies": {
+    "dateformat": "^4.4.1",
+    "request": "^2.88.2"
+  }
+}
