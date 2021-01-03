@@ -1,4 +1,4 @@
-const https = require('https');
+const http = require('http');
 const url = require('url');
 const request = require('request');
 const moment = require('moment-timezone');
@@ -8,7 +8,7 @@ var sid = "";
 var recDebounce = false;
 var motionDebounce = false;
 
-console.log("Starting surv-station-ai");
+console.log("\n\nStarting surv-station-ai");
 
 const requestListener = function (req, res) {
   console.log("Request Url :" ,req.url )
@@ -20,28 +20,35 @@ const requestListener = function (req, res) {
   	console.log("Motion Debounced");
   	return;
   }
-  try{
-	  getSnapshot(sid, function(res, snapshot){
-	  		motionDebounce = true;
-			startMotionDebounceTimer();
-			if(true){
-				getDeepStackPredictions(snapshot, function(res, err, predictions){
-					if (res && predictions !== undefined){
-						console.log('Predictions' , res, " ", predictions);
-						predictions.forEach(function(item, index){
-							if(item.confidence !== undefined &&
-								item.label !== undefined && item.label == 'person'  ){
-								console.log('Found person with ' , item.confidence, " confidence ");
-								console.log('Saving to  ' , snapshot);
-							    fs.createReadStream(__dirname + "/snapshots/" + snapshot).pipe(fs.createWriteStream(__dirname + "/captures/" + snapshot));
-								triggerRecording();
-								return;
-							}
-						});
-					}
-					console.log('Complete');
-				});
-			}
+	motionDebounce = true;
+	startMotionDebounceTimer();
+	try{
+  		getSnapshot(sid, function(res, snapshot){
+			getDeepStackPredictions(snapshot, function(res, err, predictions){
+				var objectFound = false;
+				if (res && predictions !== undefined){
+					console.log('Predictions' , res, " ", predictions);
+					predictions.forEach(function(item, index){
+						if(item.confidence !== undefined &&
+							item.label !== undefined && (item.label == 'person') && objectFound == false ){
+							objectFound = true;
+							console.log('Found ' + item.label + ' with ' , item.confidence, ' confidence ');
+							console.log('Saving to: ' , snapshot);
+							triggerRecording();
+							fs.copyFile(__dirname + "/snapshots/" + snapshot, __dirname + "/captures/" + snapshot, function(err) { 
+							  if (err) { 
+							    console.log("Error Copying Snapshot Found:", err); 
+							  } 
+							  else { 
+							    console.log("Snapshot copy complete"); 
+							  } 
+							}); 
+							return;
+						}
+					});
+				}
+				console.log('Complete');
+			});
 		})
 	}
 	catch(err){
@@ -72,7 +79,6 @@ var triggerRecording = function() {
   	}
 	var triggerUrl = config.survStationUrl + "/webapi/entry.cgi?api=SYNO.SurveillanceStation.Webhook&method=Incoming&version=1&token=DHcehiGTX39WeGJKcwqchAVSKEPW0cJKsMRIWsi6twVpvdBYh95oGYCX079pQZUr";
 	console.log("Trigerring recording")
-	sid = "";
 	recDebounce = true;
 	startRecDebounceTimer();
 	request(triggerUrl, { json: true }, (err, res, body) => {
@@ -85,8 +91,11 @@ var triggerRecording = function() {
 	});
 }
 var getSnapshot = function(sid, cb){
+	if(sid == ""){
+		authenticate();
+	}
     var now = new Date();
-    var snapshot = "snapshot-" + moment(now).tz('America/Chicago').format('YYYY-MM-DD_THH-mm-ss_SSS') + ".jpeg"
+    var snapshot = "snapshot-" + moment(now).tz('America/Chicago').format('YYYY-MM-DD_THH-mm-ss_SSS') + ".jpg"
 	var writeStream = fs.createWriteStream(__dirname + "/snapshots/" + snapshot);
 	console.log("Getting snapshot with sid", sid);
 	request.get(config.survStationUrl + '/webapi/entry.cgi?camStm=1&version=2&cameraId=1&api=%22SYNO.SurveillanceStation.Camera%22&method=GetSnapshot&_sid='+sid)
@@ -94,22 +103,25 @@ var getSnapshot = function(sid, cb){
 	    console.log("Error getting snapshot: ", err)
 	    if(cb){
 		    if(cb) cb(false,err);
-		    file.end();
 		    return;
 	    }
-	  })
+	})
+	.on('response', function(res) {
+	    console.log("getSnapshot res: ", res.statusCode)
+	})
 	.pipe(writeStream)
 	.on('close', function (err) {
-        if (err){
-        	console.log("Error piping file: ", err)
-		    if(cb) cb(false,err);
-		    file.close();
-		    return;
-        }
         console.log("Snapshot retrieved: ", snapshot)
 	    if(cb) cb(true, snapshot);
 	    return;
   
+    })
+	.on('error', function (err) {
+        if (err){
+        	console.log("Error piping file: ", err)
+		    if(cb) cb(false,err);
+		    return;
+        }  
     });
 }
 
@@ -126,30 +138,31 @@ var startMotionDebounceTimer = function(){
 }
 
 var getDeepStackPredictions = function (snapshot, cb){
+	console.log("Getting Deep Stack Predictions for " , snapshot);
 	var readStream = fs.createReadStream(__dirname + "/snapshots/" + snapshot);
 	var options = {
     	image: readStream
 	}
-	var req = request.post({url: config.deepVisionUrl, formData: options}, function (err, resp, body) {
-	  if (err) {
-	    console.log('Error!' , err);
-	    if(cb) cb(false,err);
-	    return;
-	  } else {
-	  	// console.log('Predictions for' , snapshot, " : " , body);
-	    if(cb) {
-	    	if(JSON.parse(body).predictions == undefined) cb(false,"Error retrieving predictions");
-	    	else cb(true,false,JSON.parse(body).predictions);
-	    }
-	    return;
-	  }
+	request.post({url: config.deepVisionUrl, formData: options}, function (err, resp, body) {
+		if (err) {
+			console.log('Error!' , err);
+			if(cb) cb(false,err);
+			return;
+		} else {
+			console.log('Predictions for' , snapshot, " : " , body);
+			if(cb) {
+				if(JSON.parse(body).predictions == undefined) cb(false,"Error retrieving predictions");
+				else cb(true,false,JSON.parse(body).predictions);
+			}
+		}
 	});
 }
 
-const server = https.createServer({
-  key: fs.readFileSync('key.pem'),
-  cert: fs.readFileSync('cert.pem')
-}, requestListener);
-server.listen(config.httpsServerPort);
+// const server = https.createServer({
+//   // key: fs.readFileSync('key.pem'),
+//   // cert: fs.readFileSync('cert.pem')
+// }, requestListener);
+const server = http.createServer(requestListener);
+server.listen(config.httpServerPort);
 
 authenticate();
